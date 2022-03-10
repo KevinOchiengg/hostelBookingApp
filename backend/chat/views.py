@@ -6,27 +6,37 @@ User = get_user_model()
 
 def getchat(request):
     if request.user.is_staff:
-        chats = Chat.objects.filter(admin__email=request.user.email)
-        data = list(chats.values())
-        return JsonResponse(data,safe=False)
+        data = Chat.objects.filter(admin__email=request.user.email,user__email=request.GET['user_email'])
+        chats = list(.values())
+        return JsonResponse(chats,safe=False)
     elif not request.user.is_staff:
-        user_email = request.user.email
-        admin_email = request.GET['admin_email']
+        data = Chat.objects.filter(user__email=request.user.email,admin__email=request.GET['admin_email'])
+        chats = list(data.values())
+        return JsonResponse(chats,safe=False)
 
 
 def getusers(request):
     if request.user.is_staff:
-        admin_email = request.user.email
-        user_email = request.GET['user_email']
         data = []
-        users = User.objects.filter(is_staff=False)
+        users = User.objects.filter(staff=False)
         for user in users:
             user_email = user.email
-            chat = Chat.objects.filter(user__email=user_email,admin__email=admin_email)
+            chat = Chat.objects.filter(user__email=user_email,admin__email=request.user.email)
             if chat:
                 data.append(chat.values()[0])
         print(data)
         return  JsonResponse(data,safe=False) 
+    elif not request.user.is_staff::
+        data = []
+        users = User.objects.filter(staff=True)
+        for user in users:
+            user_email = user.email
+            chat = Chat.objects.filter(user__email=user_email,admin__email=request.user.email)
+            if chat:
+                data.append(chat.values()[0])
+        print(data)
+        return  JsonResponse(data,safe=False) 
+
 
 def insertchat(request):
     if request.user.is_staff:
