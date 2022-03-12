@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
+from django.conf.global_settings import AUTH_USER_MODEL
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -45,6 +47,7 @@ INSTALLED_APPS = [
     'rating',
     'room',
     'user',
+    'hostel',
 ]
 
 MIDDLEWARE = [
@@ -84,8 +87,12 @@ WSGI_APPLICATION = 'api.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'NAME': 'hostelBooking',
+        'USER': 'postgres',
+        'PASSWORD': 'QWER5678',
+        'HOST': 'localhost',
+        'PORT': '5432'
     }
 }
 
@@ -131,7 +138,10 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+CORS_ORIGIN_ALLOW_ALL = True
 CORS_ORIGIN_WHITELIST = [
 
     'http://localhost:3000'
 ]
+
+AUTH_USER_MODEL
