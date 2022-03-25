@@ -9,9 +9,9 @@ class Rating(models.Model):
  
     user = models.ForeignKey(CustomUser , models.CASCADE )
     hostel = models.ForeignKey(Hostel , models.CASCADE )
-    subject = models.CharField(max_length=10,default='optional')
+    subject = models.CharField(max_length=10, default='optional')
     comment = models.TextField(max_length=250)
-    rate =models.IntegerField(default=0,
+    rate = models.IntegerField(default=0,
         validators=[
             MaxValueValidator(5),
             MinValueValidator(0),
