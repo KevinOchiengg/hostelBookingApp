@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from room.models import Room
 
+
 User = get_user_model()
 
 class Booking(models.Model):
