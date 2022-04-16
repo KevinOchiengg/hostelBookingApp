@@ -1,9 +1,12 @@
 from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+from room.models import Room
+
+User = get_user_model()
 
 class Booking(models.Model):
     customer = models.ForeignKey(User, on_delete = models.CASCADE)
-    room = models.ForeignKey('Room', on_delete = models.CASCADE)
+    room = models.ForeignKey(Room, on_delete = models.CASCADE)
     booking_date = models.DateTimeField(auto_now_add = True)
     checking_date = models.DateTimeField(blank = True, null=True)
     checkout_date = models.DateTimeField(null = True, blank = True)
