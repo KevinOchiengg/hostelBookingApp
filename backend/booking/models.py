@@ -1,10 +1,11 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from room.models import Room
+from hostel.models import TrackingModel
 
 User = get_user_model()
 
-class Booking(models.Model):
+class Booking(TrackingModel):
     customer = models.ForeignKey(User, on_delete = models.CASCADE)
     room = models.ForeignKey(Room, on_delete = models.CASCADE)
     booking_date = models.DateTimeField(auto_now_add = True)
