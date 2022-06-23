@@ -1,91 +1,245 @@
-from rest_framework import viewsets
-from rest_framework.permissions import AllowAny
-from .serializers import UserSerializer
-from .models import CustomUser
-from django.http import JsonResponse, HttpResponse
-from django.contrib.auth import get_user_model
-from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth import login, logout
-import random
-import re
-# Create your views here.
+
+#from user.send_mails import send_activation_mail, send_password_reset_email ---> Create this script for sending mails
+import jwt
+from django.contrib import messages
+from django.conf import settings
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.contrib.sites.shortcuts import get_current_site
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.utils.encoding import (DjangoUnicodeDecodeError, force_str,
+                                   smart_bytes, smart_str)
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from rest_framework import generics, serializers, status, viewsets
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import (IsAdminUser,
+                                        IsAuthenticated, AllowAny)
+from rest_framework.viewsets import ModelViewSet
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.db.models import Q, query
+from rest_framework.response import Response
+from rest_framework.reverse import reverse
+from rest_framework_simplejwt.serializers import (
+    TokenObtainPairSerializer)
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView, TokenRefreshView)
+from rest_framework.exceptions import AuthenticationFailed
+from user.models import (Administrator,Student, User)
+from user.serializers import (
+    AdministratorProfileSerializer, StudentProfileSerializer
+    ResetPasswordEmailRequestSerializer, SetNewPasswordSerializer,
+    UserSerializer, RegisterSerializer
+)
 
 
-def generate_session_token(length=10):
-    return ''.join(random.SystemRandom().choice([chr(i) for i in range(97, 123)] + [str(i) for i in range(10)]) for _ in range(length))
 
+class LoginViewSet(ModelViewSet, TokenObtainPairSerializer):
+    serializer_class = LoginSerializer
+    permission_classes = [AllowAny, ]
+    http_method_names = ["post"]
 
-@csrf_exempt
-def signin(request):
-    if not request.method == 'POST':
-        return JsonResponse({'error': 'Send a post request with valid paramenter only'})
-
-    # print(request.POST.get('email', None))  - if you will not get email, None will be printed
-    username = request.POST['username']
-    password = request.POST['password']
-
-    print(username)
-    print(password)
-
-# validation part
-    if not re.match("^[\w\.\+\-]+\@[\w]+\.[a-z]{2,3}$", username):
-        return JsonResponse({'error': 'Enter a valid email'})
-
-    if len(password) < 3:
-        return JsonResponse({'error': 'Password needs to be at least of 3 char'})
-
-    UserModel = get_user_model()
-
-    try:
-        user = UserModel.objects.get(username=username)
-
-        if user.check_password(password):
-            usr_dict = UserModel.objects.filter(
-                username=username).values().first()
-            usr_dict.pop('password')
-
-            if user.session_token != "0":
-                user.session_token = "0"
-                user.save()
-                return JsonResponse({'error': "Previous session exists!"})
-
-            token = generate_session_token()
-            user.session_token = token
-            user.save()
-            login(request, user)
-            return JsonResponse({'token': token, 'user': usr_dict})
-        else:
-            return JsonResponse({'error': 'Invalid password'})
-
-    except UserModel.DoesNotExist:
-        return JsonResponse({'error': 'Invalid username'})
-
-
-def signout(request, id):
-    logout(request)
-
-    UserModel = get_user_model()
-
-    try:
-        user = UserModel.objects.get(pk=id)
-        user.session_token = "0"
-        user.save()
-
-    except UserModel.DoesNotExist:
-        return JsonResponse({'error': 'Invalid user ID'})
-
-    return JsonResponse({'success': 'Logout success'})
-
-
-class UserViewSet(viewsets.ModelViewSet):
-    permission_classes_by_action = {'create': [AllowAny]}
-
-    queryset = CustomUser.objects.all().order_by('id')
-    serializer_class = UserSerializer
-
-    def get_permissions(self):
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
         try:
-            return [permission() for permission in self.permission_classes_by_action[self.action]]
+            serializer.is_valid(raise_exception=True)
+        except TokenError as e:
+            raise InvalidToken(e.args[0])
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
+    
+class RefreshViewSet(viewsets.ViewSet, TokenRefreshView):
+    permission_classes = (AllowAny,)
+    http_method_names = ['post']
 
-        except KeyError:
-            return [permission() for permission in self.permission_classes] 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as e:
+            raise InvalidToken(e.args[0])
+
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
+
+
+
+class RegistrationViewSet(ModelViewSet, TokenObtainPairView):
+    serializer_class = RegisterSerializer
+    permission_classes = [AllowAny, ]
+    http_method_names = ["post"]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        if (serializer.validated_data["password"] and serializer.validated_data["password_confirmation"]
+                and serializer.validated_data["password"] == serializer.validated_data["password_confirmation"]):
+            user = serializer.save(is_active=False)
+            user_data = serializer.data
+            send_activation_mail(user_data, request)
+            refresh = RefreshToken.for_user(user)
+            res = {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token)
+            }
+            return Response({
+                'user': serializer.data,
+                'refresh': res['refresh'],
+                'token': res['access']
+            },
+                status=status.HTTP_201_CREATED
+            )
+        else:
+            raise serializers.ValidationError(
+                {"Error": ("Passwords don\'t match!")}
+            )
+# Password Reset
+class RequestPasswordResetEmail(ModelViewSet):
+    serializer_class = ResetPasswordEmailRequestSerializer
+    permission_classes = (AllowAny,)
+    http_method_names = ["post", ]
+
+    def create(self, request, *args, **kwargs):
+        self.get_serializer(data=request.data)
+        email = request.data["email"]
+        if User.objects.filter(email=email):
+            user = User.objects.get(email=email)
+            if user.is_active:
+                pass
+                #send_password_reset_email(user, request) Create Script for sending mails
+            return Response(
+                {"Success": "If there’s an account associated with this email address, we’ll send you an email with reset instructions. If you don’t get an email, contact the Support team."
+
+                 },
+                status=status.HTTP_200_OK
+            )
+        return Response({"Success": "If there’s an account associated with this email address, we’ll send you an email with reset instructions. If you don’t get an email, contact the Support team."})
+
+
+def PasswordResetTokenCheck(request, uidb64, token):
+    try:
+        id = smart_bytes(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(id=id)
+        if not PasswordResetTokenGenerator().check_token(user, token):
+            messages.info(
+                request,
+                "Password Reset link is no longer valid, Please request a new one.")
+    except DjangoUnicodeDecodeError as identifier:
+        if not PasswordResetTokenGenerator().check_token(user, token):
+            messages.info(
+                request,
+                "Password is no longer valid, Please request a new one.")
+    context = {
+        "uidb64": uidb64,
+        "token": token,
+    }
+    # Create password_reset.html
+    return render(request, "user/password_reset.html", context)
+
+
+class SetNewPasswordAPIView(ModelViewSet):
+    serializer_class = SetNewPasswordSerializer
+    permission_classes = (AllowAny,)
+    http_method_names = ['post', ]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            password = request.data["password"]
+            password_confirmation = request.data["password_confirmation"]
+            token = request.data["token"]
+            uidb64 = request.data["uidb64"]
+            if (password and password_confirmation
+                    and password != password_confirmation):
+                raise serializers.ValidationError(
+                    {"Error": ("Passwords don\'t match!")}
+                )
+            else:
+                id = force_str(urlsafe_base64_decode(uidb64))
+                user = User.objects.get(id=id)
+                if not PasswordResetTokenGenerator().check_token(user, token):
+                    raise AuthenticationFailed(
+                        "The Reset Link is Invalid!",
+                        401,
+                    )
+                else:
+                    user.set_password(password)
+                    user.save()
+                    return Response(
+                        {"success": "Password reset successful"},
+                        status=status.HTTP_201_CREATED)
+        except Exception as e:
+            raise AuthenticationFailed(
+                "The Reset Link is Invalid!", 401)
+        return Response(serializer.data)
+
+    
+class AdministratorProfileAPIView(ModelViewSet):
+    serializer_class = AdministratorProfileSerializer
+    permission_classes = [IsAuthenticated] #Create Permission for IsAdministrator
+    http_method_names = ('put', 'get',)
+
+    def get_queryset(self):
+        user = self.request.user
+        adminQuery = Administrator.objects.filter(
+            Q(user=user)
+        )
+        return adminQuery
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def update(self, request, pk=None, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data)
+
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        userSerializer = UserSerializer(
+            request.user, data=request.data["user"]
+        )
+        userSerializer.is_valid(raise_exception=True)
+        userSerializer.save()
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+    
+class StudentProfileAPIView(ModelViewSet):
+    serializer_class = StudentProfileSerializer
+    permission_classes = [IsAuthenticated] # Create Permissions for IsStudent
+    http_method_names = ("put", "get")
+
+    def get_queryset(self):
+        user = self.request.user
+        studentQuery = Student.objects.filter(
+            Q(user=user)
+        )
+        return pharmacistQuery
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def update(self, request, pk=None, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data)
+
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        userSerializer = UserSerializer(
+            request.user, data=request.data["user"]
+        )
+        userSerializer.is_valid(raise_exception=True)
+
+        instance.user.username = userSerializer.validated_data["username"]
+        instance.user.full_name = userSerializer.validated_data["full_name"]
+        instance.user.phone = userSerializer.validated_data["phone"]
+        instance.user.save()
+        # userSerializer.save()
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
+
